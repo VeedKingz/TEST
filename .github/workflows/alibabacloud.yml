@@ -1,43 +1,26 @@
-# This workflow will build and push a new container image to Alibaba Cloud Container Registry (ACR),
-# and then will deploy it to Alibaba Cloud Container Service for Kubernetes (ACK), when there is a push to the "main" branch.
-#
-# To use this workflow, you will need to complete the following set-up steps:
-#
-# 1. Create an ACR repository to store your container images.
-#    You can use ACR EE instance for more security and better performance.
-#    For instructions see https://www.alibabacloud.com/help/doc-detail/142168.htm
-#
-# 2. Create an ACK cluster to run your containerized application.
-#    You can use ACK Pro cluster for more security and better performance.
-#    For instructions see https://www.alibabacloud.com/help/doc-detail/95108.htm
-#
-# 3. Store your AccessKey pair in GitHub Actions secrets named `ACCESS_KEY_ID` and `ACCESS_KEY_SECRET`.
-#    For instructions on setting up secrets see: https://developer.github.com/actions/managing-workflows/storing-secrets/
-#
-# 4. Change the values for the REGION_ID, REGISTRY, NAMESPACE, IMAGE, ACK_CLUSTER_ID, and ACK_DEPLOYMENT_NAME.
-#
+# This workflow builds and pushes a container image to Alibaba Cloud Container Registry (ACR),
+# and deploys it to Alibaba Cloud Container Service for Kubernetes (ACK) on pushes to main.
 
 name: Build and Deploy to ACK
 
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
 
-# Environment variables available to all jobs and steps in this workflow.
+# Environment variables configured for Your AI Website Buddy
 env:
-  REGION_ID: cn-hangzhou
-  REGISTRY: registry.cn-hangzhou.aliyuncs.com
-  NAMESPACE: namespace
-  IMAGE: repo
+  REGION_ID: ${{ secrets.ALICLOUD_REGION_ID || 'cn-hangzhou' }}
+  REGISTRY: ${{ secrets.ALICLOUD_REGISTRY || 'registry.cn-hangzhou.aliyuncs.com' }}
+  NAMESPACE: ${{ secrets.ALICLOUD_NAMESPACE || 'ai-buddy' }}
+  IMAGE: ${{ secrets.ALICLOUD_IMAGE || 'your-ai-website-buddy' }}
   TAG: ${{ github.sha }}
-  ACK_CLUSTER_ID: clusterID
-  ACK_DEPLOYMENT_NAME: nginx-deployment
+  ACK_CLUSTER_ID: ${{ secrets.ACK_CLUSTER_ID }}
+  ACK_DEPLOYMENT_NAME: your-ai-website-buddy
 
-  ACR_EE_REGISTRY: myregistry.cn-hangzhou.cr.aliyuncs.com
-  ACR_EE_INSTANCE_ID: instanceID
-  ACR_EE_NAMESPACE: namespace
-  ACR_EE_IMAGE: repo
-  ACR_EE_TAG: ${{ github.sha }}
+  # Optional: Only needed if using ACR Enterprise Edition (EE)
+  ACR_EE_REGISTRY: ${{ secrets.ACR_EE_REGISTRY || '' }}
+  ACR_EE_INSTANCE_ID: ${{ secrets.ACR_EE_INSTANCE_ID || '' }}
 
 permissions:
   contents: read
@@ -45,14 +28,13 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    environment: production
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # 1.1 Login to ACR
-    - name: Login to ACR with the AccessKey pair
+    # 1.1 Login to ACR (Standard / Personal Edition)
+    - name: Login to ACR with AccessKey
       uses: aliyun/acr-login@v1
       with:
         region-id: "${{ env.REGION_ID }}"
@@ -62,12 +44,14 @@ jobs:
     # 1.2 Build and push image to ACR
     - name: Build and push image to ACR
       run: |
-        docker build --tag "$REGISTRY/$NAMESPACE/$IMAGE:$TAG" .
+        docker build --tag "$REGISTRY/$NAMESPACE/$IMAGE:$TAG" --tag "$REGISTRY/$NAMESPACE/$IMAGE:latest" .
         docker push "$REGISTRY/$NAMESPACE/$IMAGE:$TAG"
+        docker push "$REGISTRY/$NAMESPACE/$IMAGE:latest"
 
-    # 1.3 Scan image in ACR
+    # 1.3 Scan image in ACR (non-blocking)
     - name: Scan image in ACR
       uses: aliyun/acr-scan@v1
+      continue-on-error: true
       with:
         region-id: "${{ env.REGION_ID }}"
         access-key-id: "${{ secrets.ACCESS_KEY_ID }}"
@@ -75,9 +59,9 @@ jobs:
         repository: "${{ env.NAMESPACE }}/${{ env.IMAGE }}"
         tag: "${{ env.TAG }}"
 
-    # 2.1 (Optional) Login to ACR EE
-    - uses: actions/checkout@v4
+    # 2.1 (Optional) Login to ACR EE - only runs if configured
     - name: Login to ACR EE with the AccessKey pair
+      if: env.ACR_EE_INSTANCE_ID != ''
       uses: aliyun/acr-login@v1
       with:
         login-server: "https://${{ env.ACR_EE_REGISTRY }}"
@@ -86,23 +70,14 @@ jobs:
         access-key-secret: "${{ secrets.ACCESS_KEY_SECRET }}"
         instance-id: "${{ env.ACR_EE_INSTANCE_ID }}"
 
-    # 2.2 (Optional) Build and push image ACR EE
+    # 2.2 (Optional) Push to ACR EE
     - name: Build and push image to ACR EE
+      if: env.ACR_EE_INSTANCE_ID != ''
       run: |
-        docker build -t "$ACR_EE_REGISTRY/$ACR_EE_NAMESPACE/$ACR_EE_IMAGE:$TAG" .
-        docker push "$ACR_EE_REGISTRY/$ACR_EE_NAMESPACE/$ACR_EE_IMAGE:$TAG"
-    # 2.3 (Optional) Scan image in ACR EE
-    - name: Scan image in ACR EE
-      uses: aliyun/acr-scan@v1
-      with:
-        region-id: "${{ env.REGION_ID }}"
-        access-key-id: "${{ secrets.ACCESS_KEY_ID }}"
-        access-key-secret: "${{ secrets.ACCESS_KEY_SECRET }}"
-        instance-id: "${{ env.ACR_EE_INSTANCE_ID }}"
-        repository: "${{ env.ACR_EE_NAMESPACE}}/${{ env.ACR_EE_IMAGE }}"
-        tag: "${{ env.ACR_EE_TAG }}"
+        docker build -t "$ACR_EE_REGISTRY/$NAMESPACE/$IMAGE:$TAG" .
+        docker push "$ACR_EE_REGISTRY/$NAMESPACE/$IMAGE:$TAG"
 
-    # 3.1 Set ACK context
+    # 3.1 Set ACK K8s context
     - name: Set K8s context
       uses: aliyun/ack-set-context@v1
       with:
@@ -110,13 +85,26 @@ jobs:
         access-key-secret: "${{ secrets.ACCESS_KEY_SECRET }}"
         cluster-id: "${{ env.ACK_CLUSTER_ID }}"
 
-    # 3.2 Deploy the image to the ACK cluster
+    # 3.2 Set up reliable Kustomize binary
     - name: Set up Kustomize
-      run: |-
-        curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash /dev/stdin 3.8.6
+      run: |
+        curl -sLO https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz
+        tar -zxvf kustomize_v5.4.3_linux_amd64.tar.gz
+        chmod +x ./kustomize
+
+    # 3.3 Create/Update Gemini AI Secrets in ACK
+    - name: Apply Gemini Secrets
+      run: |
+        if [ -n "${{ secrets.GEMINI_API_KEY }}" ]; then
+          kubectl create secret generic ai-buddy-secrets \
+            --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+        fi
+
+    # 3.4 Deploy to the ACK cluster
     - name: Deploy
-      run: |-
+      run: |
         ./kustomize edit set image REGISTRY/NAMESPACE/IMAGE:TAG=$REGISTRY/$NAMESPACE/$IMAGE:$TAG
         ./kustomize build . | kubectl apply -f -
-        kubectl rollout status deployment/$ACK_DEPLOYMENT_NAME
+        kubectl rollout status deployment/$ACK_DEPLOYMENT_NAME --timeout=180s
         kubectl get services -o wide

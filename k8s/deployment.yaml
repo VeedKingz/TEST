@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: __IMAGE_NAME__ # Replaced automatically during CI/CD
+          image: REGISTRY/NAMESPACE/IMAGE:TAG
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
