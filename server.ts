@@ -12,6 +12,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json());
 
+// Kubernetes / ACK Health check endpoint
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', service: 'your-ai-website-buddy', timestamp: new Date().toISOString() });
+});
+
 const apiKey = process.env.GEMINI_API_KEY || '';
 const ai = new GoogleGenAI({
   apiKey,

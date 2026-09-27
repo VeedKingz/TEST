@@ -1,0 +1,95 @@
+name: Deploy to Alibaba Cloud ACK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+env:
+  # Configure your Alibaba Cloud Container Registry (ACR) settings in GitHub Secrets
+  # Example registry: registry.cn-hangzhou.aliyuncs.com or registry.ap-southeast-1.aliyuncs.com
+  ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
+  ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE || 'ai-apps' }}
+  IMAGE_NAME: your-ai-website-buddy
+  DEPLOYMENT_NAME: your-ai-website-buddy
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Alibaba Cloud Container Registry (ACR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ALIYUN_ACR_REGISTRY }}
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+
+      - name: Build and Push Docker Image to ACR
+        id: docker_build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ALIYUN_ACR_REGISTRY }}/${{ secrets.ALIYUN_ACR_NAMESPACE || 'ai-apps' }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ secrets.ALIYUN_ACR_REGISTRY }}/${{ secrets.ALIYUN_ACR_NAMESPACE || 'ai-apps' }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up Kubectl for Alibaba Cloud ACK
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure ACK Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.ACK_KUBECONFIG }}" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+          kubectl cluster-info
+
+      - name: Create or Update Gemini API Secret in ACK
+        run: |
+          if [ -n "${{ secrets.GEMINI_API_KEY }}" ]; then
+            kubectl create secret generic ai-buddy-secrets \
+              --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+              --dry-run=client -o yaml | kubectl apply -f -
+          else
+            echo "GEMINI_API_KEY secret not found in GitHub Secrets, skipping creation"
+          fi
+
+      - name: Prepare Kubernetes Manifest with Image Tag
+        run: |
+          FULL_IMAGE="${{ secrets.ALIYUN_ACR_REGISTRY }}/${{ secrets.ALIYUN_ACR_NAMESPACE || 'ai-apps' }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          sed -i "s|__IMAGE_NAME__|$FULL_IMAGE|g" k8s/deployment.yaml
+
+      - name: Deploy to Alibaba Cloud ACK Cluster
+        run: |
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+
+      - name: Verify Rollout Status and Diagnose Errors
+        run: |
+          echo "Waiting for rollout to finish..."
+          if ! kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} --timeout=180s; then
+            echo "❌ Deployment failed! Gathering diagnostic logs..."
+            echo "--- Pod Status ---"
+            kubectl get pods -l app=${{ env.DEPLOYMENT_NAME }} -o wide
+            echo "--- Pod Events ---"
+            kubectl describe pods -l app=${{ env.DEPLOYMENT_NAME }}
+            echo "--- Container Logs ---"
+            kubectl logs deployment/${{ env.DEPLOYMENT_NAME }} --tail=100 || true
+            exit 1
+          fi
+          echo "✅ Rollout completed successfully!"
+          echo "--- Service Endpoint ---"
+          kubectl get service your-ai-website-buddy-service

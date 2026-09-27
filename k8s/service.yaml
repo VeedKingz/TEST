@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: your-ai-website-buddy-service
+  namespace: default
+  labels:
+    app: your-ai-website-buddy
+  annotations:
+    # Alibaba Cloud SLB configuration (creates an external public IP on ACK)
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-spec: "slb.s1.small"
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-charge-type: "paybytraffic"
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  selector:
+    app: your-ai-website-buddy

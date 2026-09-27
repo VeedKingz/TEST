@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: your-ai-website-buddy-ingress
+  namespace: default
+  annotations:
+    # Use Alibaba Cloud NGINX ingress or ALB ingress
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+    - host: your-domain.com # Replace with your custom domain or leave unconfigured for SLB direct access
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: your-ai-website-buddy-service
+                port:
+                  number: 80
