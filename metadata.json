@@ -1,0 +1,6 @@
+{
+  "name": "Your AI Website Buddy",
+  "description": "Modern, human-crafted websites with intelligent AI superpowers for small businesses, created by Veed Volture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
